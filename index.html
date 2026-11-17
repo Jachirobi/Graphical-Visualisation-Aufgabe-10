@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    // Design vor dem ersten Zeichnen setzen (kein Aufblitzen des hellen Designs)
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem("theme"); } catch (e) {}
+      if (t !== "dark" && t !== "light") {
+        t = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    })();
+  </script>
+  <title>Seeds Daten in 3D</title>
+  <meta name="description" content="Der Seeds-Datensatz (210 Weizenkörner, 7 Merkmale) mit t-SNE auf drei Dimensionen reduziert: bestes Ergebnis vorgeladen, Restart und schrittweises Iterieren mit tSNEJS.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .stepcount { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; margin: 0 0 0.6rem; }
+    .stepcount .label { font-weight: 700; }
+    .stepcount output { font-size: 2.2rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+    .legend { list-style: none; margin: 0 0 0.6rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; }
+    .legend label { display: inline-flex; align-items: center; gap: 0.45rem; min-height: 44px; cursor: pointer; }
+    .glyph { width: 1.1rem; height: 1.1rem; display: inline-block; border: 1.5px solid var(--ink); }
+    .glyph.kugel { border-radius: 50%; background: #ee7f1f; }
+    .glyph.wuerfel { border-radius: 2px; background: #db4099; }
+    .glyph.okta { background: #2973d9; transform: rotate(45deg) scale(0.85); }
+    .ctrl-row select { min-height: 44px; font: inherit; padding: 0 0.6rem; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#buehne">Zur Szene springen</a>
+
+  <header>
+    <div class="topbar">
+      <button type="button" id="theme-switch" class="theme-switch" role="switch" aria-checked="false">
+        <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+        <span>Dunkles Design</span>
+      </button>
+    </div>
+    <div class="intro">
+      <h1>Weizenkörner in 3D – t-SNE</h1>
+      <p>Der Seeds-Datensatz beschreibt 210 Weizenkörner der Sorten Kama, Rosa und Canadian mit sieben Messwerten. t-SNE reduziert diese sieben Dimensionen auf drei, sodass ähnliche Körner nah beieinander liegen. Beim Laden erscheint das beste vorab berechnete Ergebnis; mit <kbd>r</kbd> beginnt eine neue Berechnung, <kbd>t</kbd> rechnet einen Schritt, <kbd>T</kbd> zehn.</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="stage" id="buehne" tabindex="-1" aria-labelledby="h-szene">
+      <h2 id="h-szene">Die Punktwolke</h2>
+
+      <div class="stepcount" aria-live="off">
+        <span class="label" id="step-label">Step-Count</span>
+        <output id="step-count" aria-labelledby="step-label">–</output>
+      </div>
+      <ul class="legend" aria-label="Sorten ein- und ausblenden">
+        <li><label><input type="checkbox" id="show-1" checked> <span class="glyph kugel" aria-hidden="true"></span> Kama (Kugel)</label></li>
+        <li><label><input type="checkbox" id="show-2" checked> <span class="glyph wuerfel" aria-hidden="true"></span> Rosa (Würfel)</label></li>
+        <li><label><input type="checkbox" id="show-3" checked> <span class="glyph okta" aria-hidden="true"></span> Canadian (Oktaeder)</label></li>
+      </ul>
+
+      <figure class="scene-wrap">
+        <canvas id="gl" class="gl-canvas" width="1600" height="1000" tabindex="0" role="img" aria-labelledby="canvas-desc" aria-describedby="key-hint">
+          Ihr Browser kann das Canvas-Element nicht darstellen.
+        </canvas>
+        <figcaption id="canvas-desc" class="visually-hidden">Punktwolke.</figcaption>
+      </figure>
+      <p id="key-hint" class="hint">t-SNE: <kbd>r</kbd> Restart, <kbd>t</kbd> Step, <kbd>T</kbd> Step 10, <kbd>a</kbd> automatisch, <kbd>b</kbd> bestes Ergebnis. Ansicht: <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> drehen, <kbd>+</kbd> <kbd>−</kbd> zoomen, <kbd>c</kbd> zurück, oder ziehen und scrollen.</p>
+
+      <div class="cam-grid" id="steuerung">
+        <div class="ctrl-group" role="group" aria-labelledby="h-tsne">
+          <h3 id="h-tsne">t-SNE</h3>
+          <div class="ctrl-row">
+            <button type="button" class="btn btn-sm" id="btn-restart" aria-keyshortcuts="R">Restart <kbd aria-hidden="true">r</kbd></button>
+            <button type="button" class="btn btn-sm" id="btn-step" aria-keyshortcuts="T">Step <kbd aria-hidden="true">t</kbd></button>
+            <button type="button" class="btn btn-sm" id="btn-step10" aria-keyshortcuts="Shift+T">Step 10 <kbd aria-hidden="true">T</kbd></button>
+          </div>
+          <div class="ctrl-row">
+            <button type="button" class="btn btn-primary btn-sm" id="btn-auto" aria-pressed="false" aria-keyshortcuts="A"><span class="ico" aria-hidden="true">▶</span> Automatisch <kbd aria-hidden="true">a</kbd></button>
+            <button type="button" class="btn btn-sm" id="btn-best" aria-keyshortcuts="B">Bestes Ergebnis laden <kbd aria-hidden="true">b</kbd></button>
+          </div>
+          <div class="anim-row">
+            <label for="perplexity">Perplexity</label>
+            <input type="range" id="perplexity" min="2" max="60" step="1" value="10" aria-describedby="restart-hint">
+            <output id="perplexity-out" for="perplexity">10</output>
+          </div>
+          <div class="ctrl-row">
+            <label for="epsilon">Lernrate (epsilon)</label>
+            <select id="epsilon" aria-describedby="restart-hint">
+              <option value="5">5</option><option value="10">10</option><option value="20" selected>20</option><option value="50">50</option><option value="100">100</option>
+            </select>
+          </div>
+          <p id="restart-hint" class="hint">Perplexity und Lernrate wirken ab dem nächsten Restart.</p>
+          <dl class="readout-grid" aria-label="Werte der Berechnung">
+            <dt>Ergebnis</dt><dd id="ro-source">–</dd>
+            <dt>Kosten (KL-Divergenz)</dt><dd id="ro-cost">–</dd>
+            <dt>5-NN-Genauigkeit</dt><dd id="ro-knn">–</dd>
+            <dt>Silhouette</dt><dd id="ro-sil">–</dd>
+          </dl>
+        </div>
+
+        <div class="ctrl-group" role="group" aria-labelledby="h-nav">
+          <h3 id="h-nav">Navigation</h3>
+          <div class="ctrl-row">
+            <button type="button" class="btn btn-sm" id="btn-left" aria-keyshortcuts="ArrowLeft">Links <kbd aria-hidden="true">←</kbd></button>
+            <button type="button" class="btn btn-sm" id="btn-right" aria-keyshortcuts="ArrowRight">Rechts <kbd aria-hidden="true">→</kbd></button>
+            <button type="button" class="btn btn-sm" id="btn-up" aria-keyshortcuts="ArrowUp">Von oben <kbd aria-hidden="true">↑</kbd></button>
+            <button type="button" class="btn btn-sm" id="btn-down" aria-keyshortcuts="ArrowDown">Von unten <kbd aria-hidden="true">↓</kbd></button>
+          </div>
+          <div class="ctrl-row">
+            <button type="button" class="btn btn-sm" id="btn-in" aria-keyshortcuts="+">Näher <kbd aria-hidden="true">+</kbd></button>
+            <button type="button" class="btn btn-sm" id="btn-out" aria-keyshortcuts="-">Weiter weg <kbd aria-hidden="true">−</kbd></button>
+            <button type="button" class="btn btn-sm" id="btn-cam" aria-keyshortcuts="C">Ansicht zurücksetzen <kbd aria-hidden="true">c</kbd></button>
+          </div>
+          <div class="ctrl-row">
+            <label class="check"><input type="checkbox" id="toggle-shortcuts" checked aria-describedby="shortcut-hint"> Tastenkürzel aktiv</label>
+          </div>
+          <p id="shortcut-hint" class="visually-hidden">Einzeltasten r, t, T, a, b, c, plus und minus. Abschalten, wenn sie mit Hilfsmitteln kollidieren.</p>
+        </div>
+      </div>
+
+      <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true">Daten werden geladen …</p>
+    </section>
+
+    <section class="doc" aria-labelledby="h-bedienung">
+      <h2 id="h-bedienung">Bedienung</h2>
+      <div class="table-scroll">
+        <table class="keys">
+          <caption>Alle Interaktionen</caption>
+          <thead><tr><th scope="col">Taste</th><th scope="col">Wirkung</th><th scope="col">Auch per</th></tr></thead>
+          <tbody>
+            <tr><td><kbd>r</kbd> (oder <kbd>R</kbd>)</td><td>Restart: t-SNE beginnt bei Step 0 auf den Ausgangsdaten, mit neuen Zufallszahlen – jedes Ergebnis sieht anders aus</td><td>Restart</td></tr>
+            <tr><td><kbd>t</kbd></td><td>Step: genau einen Iterationsschritt rechnen (gedrückt halten wiederholt)</td><td>Step</td></tr>
+            <tr><td><kbd>T</kbd> (<kbd>Umschalt</kbd>+<kbd>t</kbd>)</td><td>Step 10: zehn Iterationsschritte auf einmal</td><td>Step 10</td></tr>
+            <tr><td><kbd>a</kbd></td><td>Automatisch iterieren an/aus (2 Schritte je Bild) – praktisch, um bis Schritt 1000 zu kommen</td><td>Automatisch</td></tr>
+            <tr><td><kbd>b</kbd></td><td>Bestes gespeichertes Ergebnis wieder laden</td><td>Bestes Ergebnis laden</td></tr>
+            <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Punktwolke um die senkrechte Achse drehen (Kamera kreist). Wirkt, solange der Fokus in der Szene liegt.</td><td>Links/Rechts, waagerecht ziehen</td></tr>
+            <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Von oben bzw. unten auf die Wolke schauen (±85°)</td><td>Von oben/unten, senkrecht ziehen</td></tr>
+            <tr><td><kbd>+</kbd> <kbd>−</kbd></td><td>Näher heran bzw. weiter weg</td><td>Näher/Weiter weg, Mausrad</td></tr>
+            <tr><td><kbd>c</kbd></td><td>Ansicht zurücksetzen</td><td>Ansicht zurücksetzen</td></tr>
+            <tr><td>–</td><td>Sorten einzeln ein- und ausblenden</td><td>Kontrollkästchen der Legende</td></tr>
+            <tr><td>–</td><td>Perplexity und Lernrate für den nächsten Restart</td><td>Regler und Auswahl</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Wird nach dem Laden <kbd>t</kbd> gedrückt, startet automatisch ein neuer Lauf: Das gespeicherte Ergebnis enthält nur die Endpositionen, nicht den inneren Zustand von tSNEJS (Gradienten, Momentum). Die Einzeltasten lassen sich über „Tastenkürzel aktiv“ abschalten.</p>
+    </section>
+
+    <section class="doc doc-wide" aria-labelledby="h-daten">
+      <h2 id="h-daten">Der Datensatz</h2>
+      <p>Der Seeds-Datensatz (Charytanowicz et al. 2010, UCI Machine Learning Repository) enthält je 70 Körner der Weizensorten Kama, Rosa und Canadian. Aus Röntgenaufnahmen wurden sieben geometrische Merkmale bestimmt; Kompaktheit ist <var>C</var> = 4π<var>A</var> / <var>P</var>². Mittelwerte je Sorte:</p>
+      <div class="table-scroll">
+        <table class="keys">
+          <caption>Mittelwerte der sieben Merkmale</caption>
+          <thead><tr><th scope="col">Merkmal</th><th scope="col" class="num">Kama</th><th scope="col" class="num">Rosa</th><th scope="col" class="num">Canadian</th></tr></thead>
+          <tbody id="doc-features"></tbody>
+        </table>
+      </div>
+      <p>Rosa-Körner sind deutlich größer, Canadian-Körner kleiner und asymmetrischer; Kama liegt dazwischen und überlappt mit beiden. Genau diese Überlappung bleibt auch in der 3D-Darstellung als schmale Grenzzone sichtbar.</p>
+      <p><strong>Vorverarbeitung:</strong> Die Merkmale haben sehr unterschiedliche Größenordnungen (Fläche um 15, Kompaktheit um 0,87). Ohne Anpassung würden Fläche und Umfang die Abstände fast allein bestimmen. Deshalb wird jedes Merkmal vor t-SNE z-standardisiert: (<var>x</var> − Mittelwert) / Standardabweichung. Das verbessert die Trennung messbar (siehe unten).</p>
+    </section>
+
+    <section class="doc doc-wide" aria-labelledby="h-param">
+      <h2 id="h-param">t-SNE-Einstellungen und Optimierung</h2>
+      <p>Die Einstellungen wurden nicht von Hand geraten, sondern systematisch gesucht. Das Node.js-Skript <a href="tools/optimize.js">tools/optimize.js</a> verwendet dieselbe Bibliothek tSNEJS wie die Webseite, ersetzt dort aber <code>Math.random</code> durch einen Zufallsgenerator mit festem Startwert, so ist jeder Lauf reproduzierbar. Getestet wurden 7 Perplexity-Werte × 3 Lernraten × 5 Startwerte = 105 Läufe mit je 1000 Schritten. Bewertet wurde mit der 5-NN-Genauigkeit (Anteil der Körner, deren fünf nächste Nachbarn im 3D-Ergebnis mehrheitlich zur eigenen Sorte gehören) und der Silhouette (Kompaktheit und Abstand der Gruppen).</p>
+      <div class="table-scroll">
+        <table class="keys">
+          <caption>Einstellungen des gespeicherten Ergebnisses (data/tsne-best.json)</caption>
+          <tbody id="doc-params"></tbody>
+        </table>
+      </div>
+      <div class="table-scroll">
+        <table class="keys">
+          <caption>Qualität des gespeicherten Ergebnisses</caption>
+          <thead><tr><th scope="col">Maß</th><th scope="col" class="num">Wert</th><th scope="col">Bedeutung</th></tr></thead>
+          <tbody id="doc-quality"></tbody>
+        </table>
+      </div>
+      <div class="table-scroll">
+        <table class="keys">
+          <caption>Ergebnisse der Parametersuche (Mittel über 5 Startwerte, 1000 Schritte)</caption>
+          <thead><tr><th scope="col" class="num">Perplexity</th><th scope="col" class="num">Lernrate</th><th scope="col" class="num">5-NN Ø</th><th scope="col" class="num">Silhouette Ø</th><th scope="col" class="num">5-NN bester Lauf</th><th scope="col">Auswahl</th></tr></thead>
+          <tbody id="doc-grid"></tbody>
+        </table>
+      </div>
+      <p><strong>Einordnung:</strong></p>
+      <ul class="steps">
+        <li><strong>Perplexity</strong> ist ungefähr die Zahl der Nachbarn, die t-SNE für jeden Punkt berücksichtigt. Bei 210 Punkten und 70 je Sorte trennt ein kleiner Wert um 10 die Sorten am besten: Perplexity 5 hat zwar die höchste Nachbarschaftsgenauigkeit, zerfällt aber in viele kleine Grüppchen (niedrigste Silhouette). Ab 20 werden die Gruppen runder, die Grenze zwischen Kama und den anderen Sorten wird aber unschärfer.</li>
+        <li><strong>Lernrate</strong> 20 konvergiert in tSNEJS zuverlässig. Unterschiede zwischen 5, 10 und 20 sind nach 1000 Schritten klein.</li>
+        <li><strong>Iterationen:</strong> Ab etwa Schritt 300 ändert sich die Nachbarschaftsgenauigkeit nicht mehr; 1000 Schritte geben der Wolke Zeit, sich zu glätten. Bis Schritt 100 vergrößert tSNEJS die Anziehung künstlich (Early Exaggeration). Deshalb ziehen sich die Gruppen anfangs stark zusammen und springen bei Schritt 100 sichtbar auseinander.</li>
+        <li><strong>Obergrenze:</strong> Im ursprünglichen 7D-Raum (standardisiert) erreicht die 5-NN-Klassifikation ebenfalls 93,3 %. Das 3D-Ergebnis erhält die Nachbarschaften also vollständig; die restlichen Fehler sind Körner, die schon in den Messwerten zwischen zwei Sorten liegen.</li>
+      </ul>
+    </section>
+
+    <section class="doc doc-wide" aria-labelledby="h-technik">
+      <h2 id="h-technik">Umsetzung</h2>
+      <ul class="steps">
+        <li><strong>Dateien:</strong> <code>data/seeds.csv</code> (Datensatz mit Kopfzeile), <code>data/tsne-best.json</code> (bestes Ergebnis mit Parametern und Gütemaßen), <code>lib/tsne.js</code> (tSNEJS, unverändert), <code>tools/</code> (Optimierungsskript).</li>
+        <li><strong>Start:</strong> Beide Dateien werden per <code>fetch</code> geladen; das gespeicherte Ergebnis wird sofort angezeigt, der Step-Count steht auf 1000. Vor dem Speichern wurde es auf seine Hauptachsen gedreht (PCA), damit die längste Ausdehnung in der Startansicht quer vor der Kamera liegt. Eine Drehung ändert keine Abstände, die Gütemaße bleiben gleich.</li>
+        <li><strong>Restart:</strong> <code>new tsnejs.tSNE({dim: 3, perplexity, epsilon})</code>, dann <code>initDataRaw(X)</code> mit den standardisierten Daten. tSNEJS zieht die Startpositionen mit <code>Math.random</code>, daher jedes Mal ein anderes Ergebnis.</li>
+        <li><strong>Step:</strong> <code>tsne.step()</code> liefert die Kosten, <code>getSolution()</code> die neuen Koordinaten, <code>tsne.iter</code> den Step-Count.</li>
+        <li><strong>Darstellung:</strong> t-SNE-Koordinaten haben keine feste Einheit und wachsen während der Rechnung. Für die Anzeige wird die Wolke deshalb in jedem Bild zentriert und so skaliert, dass 90 % der Punkte innerhalb des Radius 0,9 liegen, einzelne Ausreißer stauchen die Darstellung so nicht. Jedes Korn ist eine kleine Glyphe, die Sorte ist an Farbe <em>und</em> Form erkennbar (Kugel, Würfel, Oktaeder), auch bei Farbfehlsichtigkeit. Der graue Würfel dient der räumlichen Orientierung.</li>
+      </ul>
+    </section>
+
+    <section class="doc" aria-labelledby="h-a11y">
+      <h2 id="h-a11y">Barrierefreiheit</h2>
+      <dl class="hci">
+        <dt>Nicht nur Farbe</dt>
+        <dd>Die Sorten unterscheiden sich zusätzlich durch die Form der Glyphen und lassen sich einzeln ausblenden (1.4.1).</dd>
+        <dt>Tastatur</dt>
+        <dd>Jede Funktion gibt es als Taste und als Schaltfläche; die Einzeltasten lassen sich abschalten (2.1.1, 2.1.4).</dd>
+        <dt>Textalternative</dt>
+        <dd>Das Canvas nennt Schritt und Trennungsgrad; Step-Count, Kosten und Gütemaße stehen als Text daneben (1.1.1).</dd>
+        <dt>Bewegung</dt>
+        <dd>Die Wolke bewegt sich nur auf Tastendruck; die automatische Iteration startet nie von selbst und lässt sich mit <kbd>a</kbd> anhalten (2.2.2).</dd>
+      </dl>
+    </section>
+
+    <section class="doc" aria-labelledby="h-qa">
+      <h2 id="h-qa">Test und Qualitätssicherung</h2>
+      <p>Getestet in Chrome unter macOS in beiden Designs: Nach dem Laden erscheint das gespeicherte Ergebnis mit Step-Count 1000. <kbd>r</kbd> setzt auf 0 und liefert bei jedem Druck andere Startpositionen; <kbd>t</kbd> erhöht um 1, <kbd>T</kbd> um 10; die automatische Iteration bis über Schritt 1000 erreicht wieder rund 93 % Nachbarschaftsgenauigkeit. Navigation mit Tasten und Maus, Legende, Parameter. Fehlerfall: Fehlen die Datendateien, erscheint eine Meldung. Die Seite muss über einen Webserver laufen (GitHub Pages bzw. lokal <code>python3 -m http.server</code>), weil <code>fetch</code> unter <code>file://</code> blockiert wird. Die Konsole (<kbd>Cmd</kbd>+<kbd>Alt</kbd>+<kbd>J</kbd>) zeigt nur eine Info-Meldung, keine Fehler.</p>
+    </section>
+
+    <section class="doc" aria-labelledby="h-quellen">
+      <h2 id="h-quellen">Quellen</h2>
+      <ul class="sources">
+        <li><strong>Datensatz:</strong> M. Charytanowicz, J. Niewczas, P. Kulczycki, P. A. Kowalski, S. Łukasik: Seeds [Dataset], <a href="https://archive.ics.uci.edu/dataset/236/seeds">UCI Machine Learning Repository</a>, 2010, <a href="https://doi.org/10.24432/C5H30K">DOI 10.24432/C5H30K</a> (CC BY 4.0). Vorgestellt in M. Charytanowicz et al.: „Complete Gradient Clustering Algorithm for Features Analysis of X-Ray Images“, Information Technologies in Biomedicine, Springer 2010, <a href="https://doi.org/10.1007/978-3-642-13105-9_2">DOI 10.1007/978-3-642-13105-9_2</a>. Erläuterung im Kurs: <a href="https://vfhgvt.eduloop.de/loop/Der_Seeds_Datensatz">Der Seeds-Datensatz (Kapitel DIM)</a>. <code>data/seeds.csv</code> enthält die 210 Zeilen der UCI-Datei <code>seeds_dataset.txt</code> als CSV mit Kopfzeile; Mittelwerte, Minima und Maxima aller sieben Merkmale wurden mit den UCI-Angaben abgeglichen.</li>
+        <li><strong>t-SNE:</strong> L. van der Maaten, G. Hinton: <a href="https://www.jmlr.org/papers/v9/vandermaaten08a.html">„Visualizing Data using t-SNE“</a>, JMLR 9, 2008; M. Wattenberg, F. Viégas, I. Johnson: <a href="https://distill.pub/2016/misread-tsne/">„How to Use t-SNE Effectively“</a>, Distill 2016 (Wahl der Perplexity, Schrittzahl).</li>
+        <li><strong>Bibliothek:</strong> Andrej Karpathy, <a href="https://github.com/karpathy/tsnejs">tSNEJS</a> (MIT-Lizenz), unverändert als <code>lib/tsne.js</code>.</li>
+        <li><strong>Gütemaße:</strong> <a href="https://de.wikipedia.org/wiki/Silhouettenkoeffizient">Silhouettenkoeffizient (Wikipedia)</a>; Zufallsgenerator mulberry32 (gemeinfrei) im Optimierungsskript.</li>
+        <li><strong>Seite, WebGL-Darstellung und Skripte:</strong> selbst erstellt, aufbauend auf den Aufgaben 4 bis 9.</li>
+        <li><strong>Schrift:</strong> Bricolage Grotesque, Mathieu Triay, SIL Open Font License, über <a href="https://fonts.google.com/specimen/Bricolage+Grotesque">Google Fonts</a>.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>Thomas Brehmer, M.Sc. Medieninformatik, BHT Berlin</p>
+  </footer>
+
+  <script src="lib/tsne.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
